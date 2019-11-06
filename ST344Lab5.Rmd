@@ -6,13 +6,127 @@ output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, tidy = FALSE)
+knitr::opts_chunk$set(echo = TRUE, tidy = FALSE, fig.width = 5, fig.height = 3.125)
 ```
 
-# Task 1: Load Packages and Read Data
+# Task 1: Introduction, Loading Packages and Reading Data
+
+This lab report studies the Spotify dataset which consists of albums from 1960s to 2010s and aims to investigate the relationship between a track's valence and danceability. The motivation behind studying this relationship comes from the conjecture that tracks with a higher valence should sound more positive, and that these tracks are more suitable for dancing. Furthermore, the report tries to distinguish this relationship for rap albums and non-rap albums by using the speechiness of the tracks. Variables considered:  
+
+* \textbf{TrackDanceability}: describes how suitable a track is for dancing based on a combination of musical elements including tempo, rhythm stability, beat strength, and overall regularity. A value of 0.0 is least danceable and 1.0 is most danceable.
+* \textbf{TrackValence}: describes the musical positiveness conveyed by a track, measured from 0.0 to 1.0 . Tracks with high valence sound more positive (e.g. happy, cheerful, euphoric), while tracks with low valence sound more negative (e.g. sad, depressed, angry).
+* \textbf{TrackSpeechiness}: Speechiness detects the presence of spoken words in a track. Values between 0.33 and 0.66 describe tracks that may contain both music and speech, either in sections or layered, including such cases as rap music.
+
+Following are the packages used in this report and the dataset imported:
 ```{r task 1, warning = FALSE, message = FALSE}
 library(ggplot2)
 library(readxl)
 library(dplyr)
+library(betareg)
 
+Spotify <- read_excel("edited_spotify.xlsx")
+```
+
+# Task 2: EDA
+
+To investigate our initial conjecture, we fit a regression model with TrackDanceability as our response variable. We use a Generalised Linear Model which uses a beta distribution to model our response along with a logit link function. In order to use the betareg library, we need to replace the 0s in our response variable to a very small negligible number. In order to visualise the difference between rap albums and non-rap albums, we will colour code the data points depending on their speechiness.
+```{r task2.1, warning = FALSE, message = FALSE, echo = FALSE}
+Spotify$TrackDanceability[which(Spotify$TrackDanceability == 0)] = 1e-6
+
+gy_logit <- betareg(TrackDanceability ~ TrackValence, data = Spotify)
+logitplot <- ggplot(Spotify, aes(TrackValence, TrackDanceability, 
+                             color = TrackSpeechiness>0.33)) +
+    geom_point() +
+    geom_line(aes(y = predict(gy_logit, Spotify)),
+              color=c("#3366FF"),size=1.1) +
+    ggtitle("Beta regression fit with logit link") +
+    theme_bw()
+print(logitplot)
+```
+
+As seen through the plot, there is a weak correlation implying tracks with high valence tend to have higher danceability. Note that there is no separation between rap and non-rap albums in this model and the colours are only for visualisation purposes.
+
+```{r task 2.2, warning = FALSE, message = FALSE, include = FALSE}
+plot1 <- ggplot(Spotify, aes(TrackValence, TrackDanceability)) +
+  geom_point() + geom_smooth(method = "lm", formula = y ~ x, se = FALSE) +
+  ggtitle("Linear Regression Fit") +
+  theme_bw()
+
+plot2 <- ggplot(Spotify, aes(TrackValence, TrackDanceability)) + 
+    geom_point() +
+    geom_smooth(method = 'glm', formula = y ~ x, se = FALSE,
+                  method.args = list(family = quasi(link = "log"))) + 
+    ggtitle("GLM fit with log link") +
+    theme_bw()
+
+print(plot1)
+print(plot2)
+```
+
+# Task 3: Valence vs Danceability in Rap Albums
+
+We will create a nested sequence of 3 multiplicative Generalised Linear Models to exlpore the relationship between danceability and valence:  
+
+* \textbf{model1} is a simple glm which uses TrackDanceability as the response variable and TrackValence as the predictor variable. TrackSpeechiness is ignored here.
+* \textbf{model2} uses the same response and predictor as model1, but has a different intercept for tracks with speechiness less than and more than 0.33.
+* \textbf{model3} has different parameters in the linear predictor for speechy and non-speechy tracks.
+
+The error distribution for each model is a log link function.
+```{r task 3.1, warning = FALSE, message = FALSE, include = FALSE}
+scatter_plot <- ggplot(Spotify, aes(x = TrackValence, y = TrackDanceability, color=TrackSpeechiness>0.33)) +
+      geom_point() +
+      ggtitle("") +
+      theme_bw()
+
+print(scatter_plot)
+
+```
+
+```{r task 3.2, warning = FALSE, message = FALSE, include = FALSE}
+
+model1 <- betareg(TrackDanceability ~ TrackValence, data = Spotify)
+
+model2 <- betareg(TrackDanceability ~ TrackValence + as.numeric(TrackSpeechiness>0.33), data = Spotify)
+
+model3 <- betareg(TrackDanceability ~ -1 + TrackValence + 
+                    factor(TrackSpeechiness>0.33) + 
+                    factor(TrackSpeechiness>0.33):TrackValence, data = Spotify)
+
+summary(model1)
+summary(model2)
+summary(model3)
+```
+
+```{r task 3.3, warning = FALSE, message = FALSE, echo = FALSE}
+model1 <- glm(TrackDanceability ~ TrackValence, data = Spotify, 
+              family = quasi(link = "log", variance = "mu^2"))
+
+model2 <- glm(TrackDanceability ~ TrackValence + factor(TrackSpeechiness>0.33), 
+              data = Spotify, family = quasi(link = "log", variance = "mu^2"))
+
+model3 <- glm(TrackDanceability ~ -1 + TrackValence + 
+                factor(TrackSpeechiness>0.33) + 
+                factor(TrackSpeechiness>0.33):TrackValence, 
+            data = Spotify,  family = quasi(link = "log", variance = "mu^2"))
+
+anova(model1, model2, model3, test="F")
+```
+The ANOVA table gives us a variance analysis of our models and performs an F test to test whether our complex models are significantly better at capturing the data or not. The table includes p-values (row labelled 'Pr(>F)') which can be used to answer our question. To test our hypothesis at a 95% confidence, the p-value of our models must be <0.05. Clearly, model2 is a significant improvement on fit than model1 since the p-value is significantly small. However, model3 is not a significant improvement and fails the F-test. 
+
+---
+# Task 4: Visualising Distances Between Albums%
+---
+```{r task 4, warning = FALSE, message = FALSE, include= FALSE}
+MyData = {Spotify %>% 
+    group_by(Artist,AlbumName,AlbumReleaseDate) %>% 
+    summarize(AlbumValence = mean(TrackValence),
+              AlbumDanceability = mean(TrackDanceability),
+              AlbumSpeechiness = mean(TrackSpeechiness) )}
+
+MyDFData = as.data.frame(MyData)
+MyDFData[,4:6] <- scale(MyDFData[,4:6])
+row.names(MyDFData) = paste(MyDFData$Artist,MyDFData$AlbumName)
+head(MyDFData)
+#res.hc <- hclust(dist(MyDFData[,4:6]),  method = "ward.D2")
+#fviz_dend(res.hc, cex = 0.2, k = 20, palette = "jco", labels_track_height = 10)
 ```
